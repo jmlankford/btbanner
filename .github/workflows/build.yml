@@ -2,6 +2,7 @@ name: build
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 jobs:
   firmware:
@@ -18,7 +19,27 @@ jobs:
             ~/.platformio
             ~/.cache/pip
           key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
-      - name: Install PlatformIO
-        run: pip install --upgrade platformio
+      - name: Install PlatformIO and esptool
+        run: pip install --upgrade platformio "esptool==4.8.1"
       - name: Build all environments
         run: pio run
+      - name: Merge a single flashable binary (classic ESP32 / esp32dev)
+        run: |
+          set -e
+          BUILD=.pio/build/esp32dev
+          BOOT_APP0=$(find ~/.platformio/packages/framework-arduinoespressif32 -name boot_app0.bin | head -1)
+          echo "boot_app0: $BOOT_APP0"
+          python -m esptool --chip esp32 merge_bin \
+            -o esp32-ipixel-bridge-esp32dev-merged.bin \
+            --flash_mode dio --flash_freq 40m --flash_size 4MB \
+            0x1000  "$BUILD/bootloader.bin" \
+            0x8000  "$BUILD/partitions.bin" \
+            0xe000  "$BOOT_APP0" \
+            0x10000 "$BUILD/firmware.bin"
+          ls -l esp32-ipixel-bridge-esp32dev-merged.bin
+      - name: Upload merged firmware (flash this at offset 0x0)
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32dev-merged-firmware
+          path: esp32-ipixel-bridge-esp32dev-merged.bin
+          if-no-files-found: error
