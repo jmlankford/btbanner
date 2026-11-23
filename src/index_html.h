@@ -133,6 +133,13 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
     <div class="sub" style="margin:8px 0 0">Connects outbound (TLS) to your broker and listens on <span class="mono">&lt;base&gt;/cmd</span>. Publish a message there from Home Assistant or Apple Shortcuts to drive the sign from anywhere.</div>
   </div>
 
+  <div class="card">
+    <h2>Firmware update (OTA)</h2>
+    <input type="file" id="fwf" accept=".bin">
+    <div class="row" style="margin-top:8px"><button class="sec" onclick="doUpdate()">Upload &amp; flash</button></div>
+    <div class="sub" id="fwprog" style="margin-top:8px">Pick <span class="mono">firmware-ota.bin</span> from the GitHub release (NOT the merged .bin), then flash it here with no cable. The sign reboots into the new version when done.</div>
+  </div>
+
   <div id="toast"></div>
 <script>
 const $=s=>document.querySelector(s);
@@ -186,6 +193,15 @@ function sendImage(){
 }
 async function uploadImg(fd,gif){toast('sending…');try{const r=await fetch('/api/image?gif='+gif,{method:'POST',body:fd});const j=await r.json();toast(j.ok?'image sent':(j.error||'failed'));}catch(e){toast('upload error')}}
 ['pw','ph'].forEach(id=>{const el=$('#'+id);try{const v=localStorage.getItem('ipx_'+id);if(v)el.value=v;}catch(e){}el.addEventListener('change',()=>{try{localStorage.setItem('ipx_'+id,el.value)}catch(e){}})});
+function doUpdate(){
+  const f=$('#fwf').files[0]; if(!f){toast('pick firmware-ota.bin');return;}
+  const fd=new FormData(); fd.append('firmware',f,f.name);
+  const x=new XMLHttpRequest(); x.open('POST','/update');
+  x.upload.onprogress=e=>{if(e.lengthComputable)$('#fwprog').textContent='Uploading '+Math.round(e.loaded/e.total*100)+'%…';};
+  x.onload=()=>{try{const j=JSON.parse(x.responseText);$('#fwprog').textContent=j.ok?'Flashed. Rebooting…':('Failed: '+(j.error||''));toast(j.ok?'updated':'update failed');}catch(e){$('#fwprog').textContent='Done — rebooting…';}};
+  x.onerror=()=>{$('#fwprog').textContent='Connection closed (device is likely rebooting into the new firmware)';};
+  $('#fwprog').textContent='Uploading…'; x.send(fd);
+}
 refresh();setInterval(refresh,4000);
 </script>
 </body>

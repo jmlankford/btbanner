@@ -39,12 +39,16 @@ jobs:
             0x8000  "$BUILD/partitions.bin" \
             0xe000  "$BOOT_APP0" \
             0x10000 "$BUILD/firmware.bin"
-          ls -l esp32-ipixel-bridge-esp32dev-merged.bin
+          # App-only image for over-the-air updates from the web UI.
+          cp "$BUILD/firmware.bin" esp32-ipixel-bridge-esp32dev-ota.bin
+          ls -l esp32-ipixel-bridge-esp32dev-merged.bin esp32-ipixel-bridge-esp32dev-ota.bin
       - name: Upload merged firmware (flash this at offset 0x0)
         uses: actions/upload-artifact@v4
         with:
-          name: esp32dev-merged-firmware
-          path: esp32-ipixel-bridge-esp32dev-merged.bin
+          name: esp32dev-firmware
+          path: |
+            esp32-ipixel-bridge-esp32dev-merged.bin
+            esp32-ipixel-bridge-esp32dev-ota.bin
           if-no-files-found: error
       - name: Publish firmware to a Release (stable download link)
         if: github.ref == 'refs/heads/main'
@@ -53,8 +57,17 @@ jobs:
           tag_name: firmware-latest
           name: Latest firmware (flash at 0x0)
           body: |
-            Classic ESP32 (ESP32-D0WD) merged firmware. Flash
+            Classic ESP32 (ESP32-D0WD) firmware.
+
+            First flash (over USB, once): flash
             esp32-ipixel-bridge-esp32dev-merged.bin at offset 0x0.
-            Always-current direct download:
-            https://github.com/jmlankford/btbanner/releases/latest/download/esp32-ipixel-bridge-esp32dev-merged.bin
-          files: esp32-ipixel-bridge-esp32dev-merged.bin
+
+            Every flash after that (over the air, from the bridge's web page):
+            upload esp32-ipixel-bridge-esp32dev-ota.bin on the Firmware update card.
+
+            Direct links:
+            merged (serial): https://github.com/jmlankford/btbanner/releases/latest/download/esp32-ipixel-bridge-esp32dev-merged.bin
+            ota (web update): https://github.com/jmlankford/btbanner/releases/latest/download/esp32-ipixel-bridge-esp32dev-ota.bin
+          files: |
+            esp32-ipixel-bridge-esp32dev-merged.bin
+            esp32-ipixel-bridge-esp32dev-ota.bin

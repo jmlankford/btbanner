@@ -10,6 +10,7 @@
 #include <WebServer.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <Update.h>
 
 namespace Web {
 namespace {
@@ -184,6 +185,32 @@ void handleImageDone() {
   ok(r);
 }
 
+// ---- over-the-air firmware update ------------------------------------------
+// Upload the app image (firmware-ota.bin, NOT the merged bin) to /update and
+// the ESP32 writes it to the spare OTA slot and reboots into it. This is how
+// every flash after the first serial one is done, straight from this page.
+void handleUpdateUpload() {
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    Serial.printf("[ota] start: %s\n", up.filename.c_str());
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) Update.printError(Serial);
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (Update.write(up.buf, up.currentSize) != up.currentSize) Update.printError(Serial);
+  } else if (up.status == UPLOAD_FILE_END) {
+    if (Update.end(true)) Serial.printf("[ota] done: %u bytes\n", up.totalSize);
+    else Update.printError(Serial);
+  }
+}
+
+void handleUpdateDone() {
+  bool good = !Update.hasError();
+  JsonDocument d;
+  d["ok"] = good;
+  if (!good) d["error"] = String(Update.errorString());
+  sendJson(good ? 200 : 400, d);
+  if (good) { delay(500); ESP.restart(); }
+}
+
 }  // namespace
 
 void begin() {
@@ -201,6 +228,7 @@ void begin() {
   server.on("/api/wifi",       HTTP_POST, handleWifi);
   server.on("/api/mqtt",       HTTP_POST, handleMqtt);
   server.on("/api/image",      HTTP_POST, handleImageDone, handleImageUpload);
+  server.on("/update",         HTTP_POST, handleUpdateDone, handleUpdateUpload);
   server.onNotFound([]() { server.sendHeader("Location", "/"); server.send(302, "text/plain", ""); });
   server.begin();
   Serial.printf("[web] listening on port %d\n", HTTP_PORT);
