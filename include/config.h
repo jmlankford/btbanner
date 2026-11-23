@@ -81,3 +81,14 @@
 #define TEXT_MAX_CHARS        255    // num_chars is a single byte
 #define TEXT_WINDOW_BYTES     (12 * 1024)
 #define BLE_CHUNK_BYTES       244
+
+// ---- MQTT (optional remote control) ----------------------------------------
+// When enabled and the bridge is on a Wi-Fi network with internet, it connects
+// OUTBOUND to an MQTT broker over TLS and subscribes to <base>/cmd. Publish a
+// message there (Home Assistant, Apple Shortcuts, Tasker, ...) and the sign
+// updates from anywhere. Nothing is exposed inbound, so it works behind guest
+// Wi-Fi with client isolation. Set these from the web UI (stored in NVS); the
+// values here are only fallback defaults. Keep secrets OUT of this file.
+#define MQTT_HOST_DEFAULT        ""     // e.g. "abcd1234.s1.eu.hivemq.cloud"
+#define MQTT_DEFAULT_PORT        8883   // 8883 = MQTT over TLS
+#define MQTT_BASE_TOPIC_DEFAULT  "ipixel"

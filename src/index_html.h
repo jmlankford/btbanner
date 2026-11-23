@@ -99,6 +99,27 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
     <div class="sub" style="margin:8px 0 0">Joins your network in station mode. Until then the bridge runs its own hotspot.</div>
   </div>
 
+  <div class="card">
+    <h2>Remote (MQTT)</h2>
+    <div class="row" style="margin-bottom:8px"><span><span id="mpill" class="pill"></span><span id="mstate">off</span></span></div>
+    <label>Broker host</label>
+    <input type="text" id="mqhost" placeholder="abcd1234.s1.eu.hivemq.cloud">
+    <div class="row" style="margin-top:6px">
+      <div><label>Port</label><input type="number" id="mqport" value="8883" style="width:90px"></div>
+      <div class="grow"><label>Base topic</label><input type="text" id="mqbase" value="ipixel"></div>
+    </div>
+    <label>Username</label>
+    <input type="text" id="mquser" placeholder="broker username">
+    <label>Password</label>
+    <input type="text" id="mqpass" placeholder="broker password">
+    <div class="row" style="margin-top:10px">
+      <label style="margin:0"><input type="checkbox" id="mqen"> Enable</label>
+      <span class="grow"></span>
+      <button class="sec" onclick="saveMqtt()">Save &amp; reboot</button>
+    </div>
+    <div class="sub" style="margin:8px 0 0">Connects outbound (TLS) to your broker and listens on <span class="mono">&lt;base&gt;/cmd</span>. Publish a message there from Home Assistant or Apple Shortcuts to drive the sign from anywhere.</div>
+  </div>
+
   <div id="toast"></div>
 <script>
 const $=s=>document.querySelector(s);
@@ -114,6 +135,9 @@ async function refresh(){
     $('#pill').className='pill'+(j.ble?' on':'');
     $('#cstate').textContent=j.ble?('Connected: '+j.device):'Not connected';
     $('#notify').textContent=j.notify?('last notify: '+j.notify):'';
+    const m=j.mqtt||'off';
+    $('#mstate').textContent='MQTT: '+m;
+    $('#mpill').className='pill'+(m==='connected'?' on':'');
   }catch(e){}
 }
 async function scan(){
@@ -134,6 +158,7 @@ async function scan(){
 function sendText(){const c=rgb();post('/api/text',{text:$('#txt').value,r:c.r,g:c.g,b:c.b,anim:+$('#anim').value,speed:+$('#spd').value})}
 function sendRaw(){post('/api/raw',{hex:$('#raw').value})}
 function saveWifi(){post('/api/wifi',{ssid:$('#ssid').value,pass:$('#pass').value})}
+function saveMqtt(){post('/api/mqtt',{host:$('#mqhost').value,port:+$('#mqport').value,user:$('#mquser').value,pass:$('#mqpass').value,base:$('#mqbase').value,enable:$('#mqen').checked})}
 refresh();setInterval(refresh,4000);
 </script>
 </body>

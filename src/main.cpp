@@ -15,6 +15,7 @@
 #include "config.h"
 #include "ipixel.h"
 #include "web.h"
+#include "mqtt.h"
 
 static void startWifi() {
   Preferences p;
@@ -52,6 +53,7 @@ void setup() {
   startWifi();
   IPixel::begin();
   Web::begin();
+  Mqtt::begin();              // no-op unless configured and on a Wi-Fi network
 
   if (BLE_AUTO_CONNECT) {
     Serial.println("[ble] auto-connect: scanning for a sign...");
@@ -62,5 +64,6 @@ void setup() {
 void loop() {
   Web::loop();
   IPixel::loop();
+  Mqtt::loop();
   delay(2);
 }

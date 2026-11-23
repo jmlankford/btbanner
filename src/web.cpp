@@ -4,6 +4,7 @@
 #include "web.h"
 #include "config.h"
 #include "ipixel.h"
+#include "mqtt.h"
 #include "index_html.h"
 #include <WiFi.h>
 #include <WebServer.h>
@@ -55,6 +56,7 @@ void handleStatus() {
   d["device"] = IPixel::connectedName();
   d["notify"] = IPixel::lastNotifyHex();
   d["height"] = IPixel::reportedHeight();
+  d["mqtt"]   = Mqtt::statusText();
   sendJson(200, d);
 }
 
@@ -136,6 +138,22 @@ void handleWifi() {
   ESP.restart();
 }
 
+void handleMqtt() {
+  JsonDocument d; if (!body(d)) return;
+  Preferences p;
+  p.begin("ipixel", false);
+  p.putString("mq_host", (const char*)(d["host"] | ""));
+  p.putInt   ("mq_port", (int)(d["port"] | MQTT_DEFAULT_PORT));
+  p.putString("mq_user", (const char*)(d["user"] | ""));
+  p.putString("mq_pass", (const char*)(d["pass"] | ""));
+  p.putString("mq_base", (const char*)(d["base"] | MQTT_BASE_TOPIC_DEFAULT));
+  p.putBool  ("mq_en",   d["enable"] | false);
+  p.end();
+  ok(true);
+  delay(400);
+  ESP.restart();   // reconnect cleanly with the new broker settings
+}
+
 }  // namespace
 
 void begin() {
@@ -151,6 +169,7 @@ void begin() {
   server.on("/api/text",       HTTP_POST, handleText);
   server.on("/api/raw",        HTTP_POST, handleRaw);
   server.on("/api/wifi",       HTTP_POST, handleWifi);
+  server.on("/api/mqtt",       HTTP_POST, handleMqtt);
   server.onNotFound([]() { server.sendHeader("Location", "/"); server.send(302, "text/plain", ""); });
   server.begin();
   Serial.printf("[web] listening on port %d\n", HTTP_PORT);
