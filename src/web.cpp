@@ -59,6 +59,12 @@ void handleStatus() {
   d["notify"] = IPixel::lastNotifyHex();
   d["height"] = IPixel::reportedHeight();
   d["mqtt"]   = Mqtt::statusText();
+  {
+    Preferences p;
+    p.begin("ipixel", true);
+    d["name"] = p.getString("devname", WIFI_AP_SSID);
+    p.end();
+  }
   sendJson(200, d);
 }
 
@@ -130,10 +136,12 @@ void handleWifi() {
   JsonDocument d; if (!body(d)) return;
   const char* ssid = d["ssid"] | "";
   const char* pass = d["pass"] | "";
+  const char* name = d["name"] | "";
   Preferences p;
   p.begin("ipixel", false);
   p.putString("ssid", ssid);
   p.putString("pass", pass);
+  if (strlen(name)) p.putString("devname", name);   // only when provided
   p.end();
   ok(true);
   delay(400);

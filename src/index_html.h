@@ -125,10 +125,13 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
 
   <div class="card">
     <h2>Wi-Fi</h2>
+    <label>Device name (shows as the Wi-Fi hotspot name)</label>
+    <input type="text" id="devname" placeholder="e.g. Jason-MonitorLED" maxlength="31">
+    <label style="margin-top:8px">Network to join</label>
     <input type="text" id="ssid" placeholder="SSID">
     <input type="text" id="pass" placeholder="password" style="margin-top:6px">
     <div class="row" style="margin-top:8px"><button class="sec" onclick="saveWifi()">Save &amp; reboot</button></div>
-    <div class="sub" style="margin:8px 0 0">Joins your network in station mode. Until then the bridge runs its own hotspot.</div>
+    <div class="sub" style="margin:8px 0 0">The device name is what appears in Wi-Fi scans (the always-on hotspot) and as the hostname. Leave the name blank to keep the current one.</div>
   </div>
 
   <div class="card">
@@ -177,6 +180,7 @@ async function refresh(){
     const m=j.mqtt||'off';
     $('#mstate').textContent='MQTT: '+m;
     $('#mpill').className='pill'+(m==='connected'?' on':'');
+    const dn=$('#devname'); if(dn&&j.name&&document.activeElement!==dn&&!dn.value) dn.placeholder='current: '+j.name;
   }catch(e){}
 }
 async function scan(){
@@ -196,7 +200,7 @@ async function scan(){
 }
 function sendText(){const c=rgb();post('/api/text',{text:$('#txt').value,r:c.r,g:c.g,b:c.b,anim:+$('#anim').value,speed:+$('#spd').value})}
 function sendRaw(){post('/api/raw',{hex:$('#raw').value})}
-function saveWifi(){post('/api/wifi',{ssid:$('#ssid').value,pass:$('#pass').value})}
+function saveWifi(){post('/api/wifi',{name:$('#devname').value,ssid:$('#ssid').value,pass:$('#pass').value})}
 function saveMqtt(){post('/api/mqtt',{host:$('#mqhost').value,port:+$('#mqport').value,user:$('#mquser').value,pass:$('#mqpass').value,base:$('#mqbase').value,enable:$('#mqen').checked})}
 function sendImage(){
   const f=$('#imgf').files[0]; if(!f){toast('pick an image');return;}
