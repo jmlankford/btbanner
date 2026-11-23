@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 #include <Arduino.h>
 #include <WiFi.h>
+#include <ESPmDNS.h>
 #include <Preferences.h>
 #include "config.h"
 #include "ipixel.h"
@@ -27,23 +28,34 @@ static void startWifi() {
 
   WiFi.setHostname(WIFI_HOSTNAME);
 
+  // Always run the AP *and* try to join the configured network (AP+STA). The
+  // iPixelBridge hotspot at 192.168.4.1 therefore stays available for setup
+  // even when the sign is also on your Wi-Fi, so you can never lose access to
+  // the control page (and it sidesteps guest networks that isolate clients).
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(WIFI_AP_SSID, strlen(WIFI_AP_PASSWORD) ? WIFI_AP_PASSWORD : nullptr);
+  Serial.printf("[wifi] AP '%s' always on, http://%s/\n",
+                WIFI_AP_SSID, WiFi.softAPIP().toString().c_str());
+
   if (ssid.length()) {
     Serial.printf("[wifi] joining '%s'\n", ssid.c_str());
-    WiFi.mode(WIFI_STA);
     WiFi.begin(ssid.c_str(), pass.c_str());
     uint32_t t0 = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - t0 < WIFI_STA_TIMEOUT_MS)
       delay(250);
-    if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("[wifi] connected, http://%s/\n", WiFi.localIP().toString().c_str());
-      return;
-    }
-    Serial.println("[wifi] station join failed; falling back to AP");
+    if (WiFi.status() == WL_CONNECTED)
+      Serial.printf("[wifi] also joined '%s', http://%s/\n",
+                    ssid.c_str(), WiFi.localIP().toString().c_str());
+    else
+      Serial.println("[wifi] station join failed (AP still available)");
   }
 
-  WiFi.mode(WIFI_AP);
-  WiFi.softAP(WIFI_AP_SSID, strlen(WIFI_AP_PASSWORD) ? WIFI_AP_PASSWORD : nullptr);
-  Serial.printf("[wifi] AP '%s', http://%s/\n", WIFI_AP_SSID, WiFi.softAPIP().toString().c_str());
+  // mDNS: reach it at http://ipixel-bridge.local/ on networks that allow it
+  // (many guest networks block mDNS, hence the always-on AP above).
+  if (MDNS.begin(WIFI_HOSTNAME)) {
+    MDNS.addService("http", "tcp", HTTP_PORT);
+    Serial.printf("[wifi] mDNS: http://%s.local/\n", WIFI_HOSTNAME);
+  }
 }
 
 void setup() {
