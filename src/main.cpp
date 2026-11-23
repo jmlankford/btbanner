@@ -16,6 +16,7 @@
 #include "ipixel.h"
 #include "web.h"
 #include "mqtt.h"
+#include "playlist.h"
 
 static void startWifi() {
   Preferences p;
@@ -52,6 +53,7 @@ void setup() {
 
   startWifi();
   IPixel::begin();
+  Playlist::begin();          // mount LittleFS, load saved content
   Web::begin();
   Mqtt::begin();              // no-op unless configured and on a Wi-Fi network
 
@@ -65,5 +67,6 @@ void loop() {
   Web::loop();
   IPixel::loop();
   Mqtt::loop();
+  Playlist::loop();
   delay(2);
 }

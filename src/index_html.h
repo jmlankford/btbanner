@@ -99,6 +99,25 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
   </div>
 
   <div class="card">
+    <h2>Content library</h2>
+    <div class="row">
+      <label style="margin:0"><input type="checkbox" id="rot" onchange="setRotate(this.checked)"> Auto-rotate</label>
+      <span class="grow"></span>
+      <small id="fsinfo" class="mono"></small>
+    </div>
+    <div id="plist" style="margin-top:8px"></div>
+    <div class="row" style="margin-top:10px">
+      <input type="text" id="newname" placeholder="item name" class="grow">
+      <input type="number" id="newdwell" value="8" min="1" title="seconds on screen" style="width:70px">
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button class="sec" onclick="saveText()">Save current text</button>
+      <button class="sec" onclick="saveImg()">Save current image</button>
+    </div>
+    <div class="sub" style="margin-top:6px">"Save current text" uses the Scrolling&nbsp;text fields above; "Save current image" uses the Image/GIF file + Panel&nbsp;W/H above. Name it and set seconds first. Turn on Auto-rotate to cycle enabled items.</div>
+  </div>
+
+  <div class="card">
     <h2>Raw frame (debug)</h2>
     <input type="text" id="raw" placeholder="hex e.g. 05 00 07 01 01">
     <div class="row" style="margin-top:8px"><button class="sec" onclick="sendRaw()">Write</button></div>
@@ -202,7 +221,47 @@ function doUpdate(){
   x.onerror=()=>{$('#fwprog').textContent='Connection closed (device is likely rebooting into the new firmware)';};
   $('#fwprog').textContent='Uploading…'; x.send(fd);
 }
-refresh();setInterval(refresh,4000);
+let PL=[];
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+async function loadPlaylist(){try{const j=await (await fetch('/api/playlist')).json();renderPlaylist(j);}catch(e){}}
+function renderPlaylist(j){
+  PL=j.items||[]; $('#rot').checked=!!j.rotate;
+  const used=j.fs_used||0,tot=j.fs_total||0;
+  $('#fsinfo').textContent=PL.length+'/'+(j.max||64)+' items · '+Math.round(used/1024)+'/'+Math.round(tot/1024)+'KB';
+  const d=$('#plist');
+  if(!PL.length){d.innerHTML='<div class="sub">No saved items yet.</div>';return;}
+  d.innerHTML=PL.map(it=>`<div class="dev"><span style="min-width:0">`+
+    `<input type="checkbox" ${it.on?'checked':''} onchange="plToggle('${it.id}',this.checked)"> `+
+    `<b>${esc(it.name)}</b><br><small>${it.type}${(it.type=='image'&&it.gif)?' (gif)':''} · `+
+    `<input type="number" value="${it.dwell}" min="1" style="width:52px" onchange="plDwell('${it.id}',this.value)">s</small></span>`+
+    `<span style="white-space:nowrap">`+
+    `<button class="sec" onclick="plMove('${it.id}',-1)">▲</button>`+
+    `<button class="sec" onclick="plMove('${it.id}',1)">▼</button>`+
+    `<button onclick="plPlay('${it.id}')">Play</button>`+
+    `<button class="sec" onclick="plDel('${it.id}')">×</button></span></div>`).join('');
+}
+function setRotate(on){post('/api/playlist/rotate',{on}).then(loadPlaylist);}
+function plToggle(id,on){post('/api/playlist/update',{id,on}).then(loadPlaylist);}
+function plDwell(id,v){post('/api/playlist/update',{id,dwell:+v});}
+function plPlay(id){post('/api/playlist/play',{id});}
+function plDel(id){post('/api/playlist/delete',{id}).then(loadPlaylist);}
+function plMove(id,dir){const i=PL.findIndex(x=>x.id==id);if(i<0)return;const j=i+dir;if(j<0||j>=PL.length)return;const a=PL.slice();[a[i],a[j]]=[a[j],a[i]];post('/api/playlist/reorder',{order:a.map(x=>x.id)}).then(loadPlaylist);}
+function saveText(){const c=rgb();post('/api/playlist/text',{name:$('#newname').value,dwell:+$('#newdwell').value,text:$('#txt').value,r:c.r,g:c.g,b:c.b,anim:+$('#anim').value,speed:+$('#spd').value}).then(loadPlaylist);}
+function saveImg(){
+  const f=$('#imgf').files[0]; if(!f){toast('pick an image in the Image card');return;}
+  const q='name='+encodeURIComponent($('#newname').value||'image')+'&dwell='+(+$('#newdwell').value||10);
+  if($('#gifmode').checked){const fd=new FormData();fd.append('file',f,f.name||'a.gif');plUpload(fd,'gif=1&'+q);return;}
+  const W=parseInt($('#pw').value)||64,H=parseInt($('#ph').value)||16;
+  const url=URL.createObjectURL(f),img=new Image();
+  img.onload=()=>{const cv=$('#cv');cv.width=W;cv.height=H;const x=cv.getContext('2d');
+    const s=Math.max(W/img.width,H/img.height),dw=img.width*s,dh=img.height*s;
+    x.fillStyle='#000';x.fillRect(0,0,W,H);x.drawImage(img,(W-dw)/2,(H-dh)/2,dw,dh);
+    URL.revokeObjectURL(url);
+    cv.toBlob(b=>{const fd=new FormData();fd.append('file',b,'i.png');plUpload(fd,'gif=0&'+q);},'image/png');};
+  img.onerror=()=>{URL.revokeObjectURL(url);toast('bad image')};img.src=url;
+}
+async function plUpload(fd,q){toast('saving…');try{const r=await fetch('/api/playlist/image?'+q,{method:'POST',body:fd});const j=await r.json();toast(j.ok?'saved':(j.error||'failed'));loadPlaylist();}catch(e){toast('upload error')}}
+loadPlaylist();refresh();setInterval(refresh,4000);
 </script>
 </body>
 </html>)HTML";

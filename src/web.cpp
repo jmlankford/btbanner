@@ -5,6 +5,7 @@
 #include "config.h"
 #include "ipixel.h"
 #include "mqtt.h"
+#include "playlist.h"
 #include "index_html.h"
 #include <WiFi.h>
 #include <WebServer.h>
@@ -211,6 +212,62 @@ void handleUpdateDone() {
   if (good) { delay(500); ESP.restart(); }
 }
 
+// ---- content library / playlist --------------------------------------------
+void handlePlaylistGet() {
+  JsonDocument d;
+  Playlist::toJson(d);
+  d["ok"] = true;
+  sendJson(200, d);
+}
+
+void handlePlaylistAddText() {
+  JsonDocument d; if (!body(d)) return;
+  bool r = Playlist::addText(String((const char*)(d["name"] | "")),
+                             String((const char*)(d["text"] | "")),
+                             d["r"] | 255, d["g"] | 255, d["b"] | 255,
+                             (uint8_t)(d["anim"] | 1), (uint8_t)(d["speed"] | 80),
+                             (uint16_t)(d["dwell"] | 8));
+  ok(r, "add failed (library full?)");
+}
+
+void handlePlaylistImageDone() {
+  if (g_imgTooBig) { g_imgBuf.clear(); g_imgBuf.shrink_to_fit(); return ok(false, "image too large (max 48 KB)"); }
+  if (g_imgBuf.empty()) return ok(false, "no image data");
+  bool gif = (server.arg("gif") == "1");
+  bool r = Playlist::addImage(server.arg("name"), gif,
+                              (uint16_t)server.arg("dwell").toInt(),
+                              g_imgBuf.data(), g_imgBuf.size());
+  g_imgBuf.clear(); g_imgBuf.shrink_to_fit();
+  ok(r, "add failed (storage full or library full?)");
+}
+
+void handlePlaylistUpdate() {
+  JsonDocument d; if (!body(d)) return;
+  String id = String((const char*)(d["id"] | ""));
+  if (!id.length()) return ok(false, "missing id");
+  ok(Playlist::updateItem(id, d.as<JsonVariantConst>()), "no such item");
+}
+
+void handlePlaylistDelete() {
+  JsonDocument d; if (!body(d)) return;
+  ok(Playlist::removeItem(String((const char*)(d["id"] | ""))), "no such item");
+}
+
+void handlePlaylistReorder() {
+  JsonDocument d; if (!body(d)) return;
+  ok(Playlist::reorder(d["order"].as<JsonArrayConst>()));
+}
+
+void handlePlaylistPlay() {
+  JsonDocument d; if (!body(d) || !requireBle()) return;
+  ok(Playlist::playNow(String((const char*)(d["id"] | ""))), "play failed");
+}
+
+void handlePlaylistRotate() {
+  JsonDocument d; if (!body(d)) return;
+  ok(Playlist::setRotate(d["on"] | false));
+}
+
 }  // namespace
 
 void begin() {
@@ -229,6 +286,14 @@ void begin() {
   server.on("/api/mqtt",       HTTP_POST, handleMqtt);
   server.on("/api/image",      HTTP_POST, handleImageDone, handleImageUpload);
   server.on("/update",         HTTP_POST, handleUpdateDone, handleUpdateUpload);
+  server.on("/api/playlist",         HTTP_GET,  handlePlaylistGet);
+  server.on("/api/playlist/text",    HTTP_POST, handlePlaylistAddText);
+  server.on("/api/playlist/image",   HTTP_POST, handlePlaylistImageDone, handleImageUpload);
+  server.on("/api/playlist/update",  HTTP_POST, handlePlaylistUpdate);
+  server.on("/api/playlist/delete",  HTTP_POST, handlePlaylistDelete);
+  server.on("/api/playlist/reorder", HTTP_POST, handlePlaylistReorder);
+  server.on("/api/playlist/play",    HTTP_POST, handlePlaylistPlay);
+  server.on("/api/playlist/rotate",  HTTP_POST, handlePlaylistRotate);
   server.onNotFound([]() { server.sendHeader("Location", "/"); server.send(302, "text/plain", ""); });
   server.begin();
   Serial.printf("[web] listening on port %d\n", HTTP_PORT);
