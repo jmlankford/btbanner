@@ -1,0 +1,51 @@
+# iPixel LED sign - Lovelace dashboard card
+# ---------------------------------------------------------------------------
+# Add a manual card to any dashboard: Edit dashboard -> + Add Card -> Manual,
+# then paste this. Requires ipixel_package.yaml to be installed (it provides
+# the helpers and scripts referenced here).
+# ---------------------------------------------------------------------------
+type: vertical-stack
+cards:
+  - type: markdown
+    content: "## Monitor LED sign"
+  - type: entities
+    entities:
+      - entity: input_text.sign_message
+      - entity: input_text.sign_color
+  - type: horizontal-stack
+    cards:
+      - type: button
+        name: Send text
+        icon: mdi:send
+        tap_action: { action: call-service, service: script.sign_send_text }
+      - type: button
+        name: Clear
+        icon: mdi:eraser-variant
+        tap_action: { action: call-service, service: script.sign_clear }
+  - type: entities
+    entities:
+      - entity: input_number.sign_brightness
+  - type: horizontal-stack
+    cards:
+      - type: button
+        name: Set bright
+        icon: mdi:brightness-6
+        tap_action: { action: call-service, service: script.sign_set_brightness }
+      - type: button
+        name: "On"
+        icon: mdi:power
+        tap_action: { action: call-service, service: script.sign_power_on }
+      - type: button
+        name: "Off"
+        icon: mdi:power-off
+        tap_action: { action: call-service, service: script.sign_power_off }
+  - type: horizontal-stack
+    cards:
+      - type: button
+        name: Rotate on
+        icon: mdi:play-circle
+        tap_action: { action: call-service, service: script.sign_rotate_on }
+      - type: button
+        name: Rotate off
+        icon: mdi:stop-circle
+        tap_action: { action: call-service, service: script.sign_rotate_off }

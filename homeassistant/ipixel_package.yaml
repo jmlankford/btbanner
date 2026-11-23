@@ -1,0 +1,115 @@
+# iPixel LED sign - Home Assistant package
+# ---------------------------------------------------------------------------
+# Drop this file into <config>/packages/ and enable packages in
+# configuration.yaml:
+#
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# Then restart Home Assistant. It adds the helpers, scripts and two example
+# geofence automations used by dashboard.yaml. All it does is publish JSON to
+# the MQTT topic `ipixel/cmd`, which the sign is subscribed to.
+#
+# Set the base topic to match the sign's MQTT card (default base is "ipixel",
+# so the command topic is "ipixel/cmd"). If you changed the base, replace
+# ipixel/cmd everywhere below.
+# ---------------------------------------------------------------------------
+
+input_text:
+  sign_message:
+    name: Sign message
+    max: 255
+  sign_color:
+    name: Sign colour (hex, e.g. ff8000)
+    initial: "ff8000"
+    max: 7
+
+input_number:
+  sign_brightness:
+    name: Sign brightness
+    min: 0
+    max: 100
+    step: 5
+    initial: 80
+
+script:
+  sign_send_text:
+    alias: Sign - send text
+    sequence:
+      - service: mqtt.publish
+        data:
+          topic: ipixel/cmd
+          payload: >-
+            {"type":"text",
+             "text": {{ states('input_text.sign_message') | to_json }},
+             "r": {{ (states('input_text.sign_color')|replace('#',''))[0:2] | int(0,16) }},
+             "g": {{ (states('input_text.sign_color')|replace('#',''))[2:4] | int(0,16) }},
+             "b": {{ (states('input_text.sign_color')|replace('#',''))[4:6] | int(0,16) }},
+             "anim":1,"speed":80}
+
+  sign_set_brightness:
+    alias: Sign - set brightness
+    sequence:
+      - service: mqtt.publish
+        data:
+          topic: ipixel/cmd
+          payload: '{"type":"brightness","level": {{ states("input_number.sign_brightness") | int }} }'
+
+  sign_power_on:
+    alias: Sign - power on
+    sequence:
+      - service: mqtt.publish
+        data: { topic: ipixel/cmd, payload: '{"type":"power","on":true}' }
+
+  sign_power_off:
+    alias: Sign - power off
+    sequence:
+      - service: mqtt.publish
+        data: { topic: ipixel/cmd, payload: '{"type":"power","on":false}' }
+
+  sign_clear:
+    alias: Sign - clear
+    sequence:
+      - service: mqtt.publish
+        data: { topic: ipixel/cmd, payload: '{"type":"clear"}' }
+
+  sign_rotate_on:
+    alias: Sign - auto-rotate on
+    sequence:
+      - service: mqtt.publish
+        data: { topic: ipixel/cmd, payload: '{"type":"rotate","on":true}' }
+
+  sign_rotate_off:
+    alias: Sign - auto-rotate off
+    sequence:
+      - service: mqtt.publish
+        data: { topic: ipixel/cmd, payload: '{"type":"rotate","on":false}' }
+
+# --- Example geofence automations -------------------------------------------
+# Replace person.YOU with your HA person entity and zone.work / zone.home with
+# your zones (Settings -> Areas & Zones). Messages are ASCII only (the sign's
+# font has no accents/emoji).
+automation:
+  - alias: Sign - leaving work
+    trigger:
+      - platform: zone
+        entity_id: person.YOU
+        zone: zone.work
+        event: leave
+    action:
+      - service: mqtt.publish
+        data:
+          topic: ipixel/cmd
+          payload: '{"type":"text","text":"Out - back soon","r":255,"g":120,"b":0,"anim":1,"speed":80}'
+
+  - alias: Sign - arriving work
+    trigger:
+      - platform: zone
+        entity_id: person.YOU
+        zone: zone.work
+        event: enter
+    action:
+      - service: mqtt.publish
+        data:
+          topic: ipixel/cmd
+          payload: '{"type":"text","text":"In the office","r":0,"g":200,"b":120,"anim":1,"speed":80}'

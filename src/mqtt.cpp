@@ -6,6 +6,7 @@
 #include "mqtt.h"
 #include "config.h"
 #include "ipixel.h"
+#include "playlist.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
@@ -71,6 +72,10 @@ void onMessage(char* /*t*/, uint8_t* payload, unsigned int len) {
       std::vector<uint8_t> bytes;
       if (parseHex(String((const char*)(d["hex"] | "")), bytes))
         ok = IPixel::sendRaw(bytes.data(), bytes.size());
+    } else if (cmd == "rotate") {
+      ok = Playlist::setRotate(d["on"] | false);
+    } else if (cmd == "play") {
+      ok = Playlist::playNow(String((const char*)(d["id"] | "")));
     }
   } else {
     // Bare string -> scrolling text with defaults (white, scroll-left).
