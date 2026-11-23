@@ -154,6 +154,36 @@ void handleMqtt() {
   ESP.restart();   // reconnect cleanly with the new broker settings
 }
 
+// ---- image upload ----------------------------------------------------------
+// The browser resizes/encodes to the panel size and POSTs the file bytes as
+// multipart/form-data to /api/image?gif=0|1. We buffer the bytes and forward
+// them to the sign, which decodes the PNG/GIF itself.
+std::vector<uint8_t> g_imgBuf;
+bool   g_imgTooBig = false;
+static const size_t IMG_MAX_BYTES = 48 * 1024;
+
+void handleImageUpload() {
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    g_imgBuf.clear();
+    g_imgTooBig = false;
+  } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (g_imgBuf.size() + up.currentSize > IMG_MAX_BYTES) { g_imgTooBig = true; return; }
+    g_imgBuf.insert(g_imgBuf.end(), up.buf, up.buf + up.currentSize);
+  }
+}
+
+void handleImageDone() {
+  if (!IPixel::isConnected()) return ok(false, "sign not connected");
+  if (g_imgTooBig) { g_imgBuf.clear(); g_imgBuf.shrink_to_fit(); return ok(false, "image too large (max 48 KB)"); }
+  if (g_imgBuf.empty()) return ok(false, "no image data");
+  bool gif = (server.arg("gif") == "1");
+  bool r = IPixel::sendImage(gif, g_imgBuf.data(), g_imgBuf.size());
+  g_imgBuf.clear();
+  g_imgBuf.shrink_to_fit();
+  ok(r);
+}
+
 }  // namespace
 
 void begin() {
@@ -170,6 +200,7 @@ void begin() {
   server.on("/api/raw",        HTTP_POST, handleRaw);
   server.on("/api/wifi",       HTTP_POST, handleWifi);
   server.on("/api/mqtt",       HTTP_POST, handleMqtt);
+  server.on("/api/image",      HTTP_POST, handleImageDone, handleImageUpload);
   server.onNotFound([]() { server.sendHeader("Location", "/"); server.send(302, "text/plain", ""); });
   server.begin();
   Serial.printf("[web] listening on port %d\n", HTTP_PORT);

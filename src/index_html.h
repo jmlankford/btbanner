@@ -86,6 +86,19 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
   </div>
 
   <div class="card">
+    <h2>Image / GIF</h2>
+    <div class="row">
+      <div><label>Panel W</label><input type="number" id="pw" value="64" style="width:80px"></div>
+      <div><label>Panel H</label><input type="number" id="ph" value="16" style="width:80px"></div>
+    </div>
+    <input type="file" id="imgf" accept="image/*" style="margin-top:8px">
+    <label style="margin-top:8px"><input type="checkbox" id="gifmode"> Send GIF animated (must already be panel size)</label>
+    <div class="row" style="margin-top:8px"><button onclick="sendImage()">Send image</button></div>
+    <canvas id="cv" width="64" height="16" style="display:none"></canvas>
+    <div class="sub" style="margin-top:8px">Static images are cropped and resized to Panel&nbsp;W&times;H in your browser, then the sign decodes them. For a different sign, just change W/H. Animated GIFs are sent as-is, so size the GIF to W&times;H first. Max 48&nbsp;KB.</div>
+  </div>
+
+  <div class="card">
     <h2>Raw frame (debug)</h2>
     <input type="text" id="raw" placeholder="hex e.g. 05 00 07 01 01">
     <div class="row" style="margin-top:8px"><button class="sec" onclick="sendRaw()">Write</button></div>
@@ -159,6 +172,20 @@ function sendText(){const c=rgb();post('/api/text',{text:$('#txt').value,r:c.r,g
 function sendRaw(){post('/api/raw',{hex:$('#raw').value})}
 function saveWifi(){post('/api/wifi',{ssid:$('#ssid').value,pass:$('#pass').value})}
 function saveMqtt(){post('/api/mqtt',{host:$('#mqhost').value,port:+$('#mqport').value,user:$('#mquser').value,pass:$('#mqpass').value,base:$('#mqbase').value,enable:$('#mqen').checked})}
+function sendImage(){
+  const f=$('#imgf').files[0]; if(!f){toast('pick an image');return;}
+  if($('#gifmode').checked){const fd=new FormData();fd.append('file',f,f.name||'a.gif');uploadImg(fd,1);return;}
+  const W=parseInt($('#pw').value)||64,H=parseInt($('#ph').value)||16;
+  const url=URL.createObjectURL(f),img=new Image();
+  img.onload=()=>{const cv=$('#cv');cv.width=W;cv.height=H;const x=cv.getContext('2d');
+    const s=Math.max(W/img.width,H/img.height),dw=img.width*s,dh=img.height*s;
+    x.fillStyle='#000';x.fillRect(0,0,W,H);x.drawImage(img,(W-dw)/2,(H-dh)/2,dw,dh);
+    URL.revokeObjectURL(url);
+    cv.toBlob(b=>{const fd=new FormData();fd.append('file',b,'i.png');uploadImg(fd,0);},'image/png');};
+  img.onerror=()=>{URL.revokeObjectURL(url);toast('bad image')};img.src=url;
+}
+async function uploadImg(fd,gif){toast('sending…');try{const r=await fetch('/api/image?gif='+gif,{method:'POST',body:fd});const j=await r.json();toast(j.ok?'image sent':(j.error||'failed'));}catch(e){toast('upload error')}}
+['pw','ph'].forEach(id=>{const el=$('#'+id);try{const v=localStorage.getItem('ipx_'+id);if(v)el.value=v;}catch(e){}el.addEventListener('change',()=>{try{localStorage.setItem('ipx_'+id,el.value)}catch(e){}})});
 refresh();setInterval(refresh,4000);
 </script>
 </body>

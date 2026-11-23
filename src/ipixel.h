@@ -58,6 +58,10 @@ bool setPixel(uint8_t r, uint8_t g, uint8_t b, uint8_t x, uint8_t y);
 bool sendText(const String& text, uint8_t r, uint8_t g, uint8_t b,
               uint8_t anim, uint8_t speed);
 
+// Upload an image the device decodes itself. `data` is the raw file bytes,
+// already sized to the panel (PNG for static, GIF for animated).
+bool sendImage(bool isGif, const uint8_t* data, size_t len, uint8_t saveSlot = 0);
+
 // Escape hatch for reverse-engineering: send a raw, fully-formed frame.
 bool sendRaw(const uint8_t* data, size_t len);
 

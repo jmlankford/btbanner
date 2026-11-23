@@ -111,9 +111,12 @@ bool writeChunked(const std::vector<uint8_t>& pkt) {
 }
 
 // Wrap a data payload in the windowed/CRC transport used for text & images and
-// send it. Windows are 12 KiB; each window carries a 13-byte header and the
-// CRC of the *entire* payload.
-bool sendFramed(const std::vector<uint8_t>& payload, uint8_t saveSlot = 0) {
+// send it. Windows are 12 KiB; each window carries a 13-byte header (its first
+// two bytes and the tail byte identify the payload type) and the CRC of the
+// *entire* payload.
+//   text: b0=0x00 b1=0x01 tail=0x00 | PNG: 0x02/0x00/0x00 | GIF: 0x03/0x00/0x02
+bool sendFramed(const std::vector<uint8_t>& payload,
+                uint8_t b0, uint8_t b1, uint8_t tail, uint8_t saveSlot) {
   if (!g_connected || !writeChar) return false;
   const uint32_t crc  = crc32(payload.data(), payload.size());
   const uint32_t psz  = payload.size();
@@ -122,12 +125,12 @@ bool sendFramed(const std::vector<uint8_t>& payload, uint8_t saveSlot = 0) {
   while (off < payload.size() || first) {
     size_t take = min((size_t)TEXT_WINDOW_BYTES, payload.size() - off);
     std::vector<uint8_t> frame;
-    frame.push_back(0x00);
-    frame.push_back(0x01);
+    frame.push_back(b0);
+    frame.push_back(b1);
     frame.push_back(first ? 0x00 : 0x02);          // option
     putLE32(frame, psz);                           // total payload size
     putLE32(frame, crc);                           // CRC of whole payload
-    frame.push_back(0x00);
+    frame.push_back(tail);
     frame.push_back(saveSlot);
     frame.insert(frame.end(), payload.begin() + off, payload.begin() + off + take);
 
@@ -308,7 +311,16 @@ bool sendText(const String& text, uint8_t r, uint8_t g, uint8_t b,
       payload.push_back(pgm_read_byte(&glyph[row]));
   }
 
-  return sendFramed(payload);
+  return sendFramed(payload, 0x00, 0x01, 0x00, 0);
+}
+
+bool sendImage(bool isGif, const uint8_t* data, size_t len, uint8_t saveSlot) {
+  if (!g_connected || !writeChar || !data || !len) return false;
+  std::vector<uint8_t> payload(data, data + len);
+  // The device decodes the PNG/GIF itself; we just stream the raw file bytes
+  // through the same windowed/CRC transport with the image type bytes.
+  //   PNG: b0=0x02 tail=0x00   GIF: b0=0x03 tail=0x02
+  return sendFramed(payload, isGif ? 0x03 : 0x02, 0x00, isGif ? 0x02 : 0x00, saveSlot);
 }
 
 bool sendRaw(const uint8_t* data, size_t len) {
