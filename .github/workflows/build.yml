@@ -4,6 +4,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   firmware:
     runs-on: ubuntu-latest
@@ -43,3 +46,15 @@ jobs:
           name: esp32dev-merged-firmware
           path: esp32-ipixel-bridge-esp32dev-merged.bin
           if-no-files-found: error
+      - name: Publish firmware to a Release (stable download link)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: firmware-latest
+          name: Latest firmware (flash at 0x0)
+          body: |
+            Classic ESP32 (ESP32-D0WD) merged firmware. Flash
+            esp32-ipixel-bridge-esp32dev-merged.bin at offset 0x0.
+            Always-current direct download:
+            https://github.com/jmlankford/btbanner/releases/latest/download/esp32-ipixel-bridge-esp32dev-merged.bin
+          files: esp32-ipixel-bridge-esp32dev-merged.bin
