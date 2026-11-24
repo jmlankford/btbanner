@@ -43,7 +43,14 @@
 // Negotiated ATT MTU. The text transport writes in 244-byte GATT chunks, so we
 // ask for an MTU large enough to carry them in a single write.
 #define BLE_MTU                 247
-#define BLE_ACK_TIMEOUT_MS      8000     // wait for a notify ACK after a window
+// How long to wait for a per-window notify ACK. This sign does not send ACKs
+// at all, so the wait is pure dead time that (because the web server shares
+// this single thread) freezes the UI during every send. The GATT writes are
+// already acknowledged at the link layer, so the data is delivered regardless;
+// this is just a short settle so the sign can render before the next window.
+// Kept short to keep the server responsive. A sign that DOES ACK still exits
+// the wait early the moment its notify arrives.
+#define BLE_ACK_TIMEOUT_MS      800
 
 // ---- iPixel command opcodes ------------------------------------------------
 // Simple commands are framed as: [len, 0x00, cmdId, typeId, payload...]
