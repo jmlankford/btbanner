@@ -95,7 +95,7 @@ static const char INDEX_HTML[] PROGMEM = R"HTML(<!doctype html>
     <label style="margin-top:8px"><input type="checkbox" id="gifmode"> Send GIF animated (must already be panel size)</label>
     <div class="row" style="margin-top:8px"><button onclick="sendImage()">Send image</button></div>
     <canvas id="cv" width="64" height="16" style="display:none"></canvas>
-    <div class="sub" style="margin-top:8px">Static images are cropped and resized to Panel&nbsp;W&times;H in your browser, then the sign decodes them. For a different sign, just change W/H. Animated GIFs are sent as-is, so size the GIF to W&times;H first. Max 48&nbsp;KB.</div>
+    <div class="sub" style="margin-top:8px">Static images are cropped and resized to Panel&nbsp;W&times;H in your browser, then the sign decodes them. For a different sign, just change W/H. Animated GIFs are sent as-is, so size the GIF to W&times;H first. Max&nbsp;<b id="imgmax">…</b>.</div>
   </div>
 
   <div class="card">
@@ -181,8 +181,11 @@ async function refresh(){
     $('#mstate').textContent='MQTT: '+m;
     $('#mpill').className='pill'+(m==='connected'?' on':'');
     const dn=$('#devname'); if(dn&&j.name&&document.activeElement!==dn&&!dn.value) dn.placeholder='current: '+j.name;
+    if(j.imgMax){IMG_MAX=j.imgMax;const el=$('#imgmax');if(el)el.textContent=Math.round(j.imgMax/1024)+' KB'+(j.psram?' (PSRAM)':'');}
   }catch(e){}
 }
+var IMG_MAX=0;   // real image/GIF byte limit, filled from /api/status
+function imgTooBig(f){if(IMG_MAX&&f&&f.size>IMG_MAX){toast('too big: '+Math.round(f.size/1024)+' KB > '+Math.round(IMG_MAX/1024)+' KB max');return true;}return false;}
 async function scan(){
   $('#scanBtn').disabled=true;$('#scanBtn').textContent='Scanning…';
   try{const j=await (await fetch('/api/scan')).json();
@@ -204,7 +207,7 @@ function saveWifi(){post('/api/wifi',{name:$('#devname').value,ssid:$('#ssid').v
 function saveMqtt(){post('/api/mqtt',{host:$('#mqhost').value,port:+$('#mqport').value,user:$('#mquser').value,pass:$('#mqpass').value,base:$('#mqbase').value,enable:$('#mqen').checked})}
 function sendImage(){
   const f=$('#imgf').files[0]; if(!f){toast('pick an image');return;}
-  if($('#gifmode').checked){const fd=new FormData();fd.append('file',f,f.name||'a.gif');uploadImg(fd,1);return;}
+  if($('#gifmode').checked){if(imgTooBig(f))return;const fd=new FormData();fd.append('file',f,f.name||'a.gif');uploadImg(fd,1);return;}
   const W=parseInt($('#pw').value)||64,H=parseInt($('#ph').value)||16;
   const url=URL.createObjectURL(f),img=new Image();
   img.onload=()=>{const cv=$('#cv');cv.width=W;cv.height=H;const x=cv.getContext('2d');
@@ -254,7 +257,7 @@ function saveText(){const c=rgb();post('/api/playlist/text',{name:$('#newname').
 function saveImg(){
   const f=$('#imgf').files[0]; if(!f){toast('pick an image in the Image card');return;}
   const q='name='+encodeURIComponent($('#newname').value||'image')+'&dwell='+(+$('#newdwell').value||10);
-  if($('#gifmode').checked){const fd=new FormData();fd.append('file',f,f.name||'a.gif');plUpload(fd,'gif=1&'+q);return;}
+  if($('#gifmode').checked){if(imgTooBig(f))return;const fd=new FormData();fd.append('file',f,f.name||'a.gif');plUpload(fd,'gif=1&'+q);return;}
   const W=parseInt($('#pw').value)||64,H=parseInt($('#ph').value)||16;
   const url=URL.createObjectURL(f),img=new Image();
   img.onload=()=>{const cv=$('#cv');cv.width=W;cv.height=H;const x=cv.getContext('2d');

@@ -12,11 +12,14 @@
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <Update.h>
+#include <esp_heap_caps.h>
 
 namespace Web {
 namespace {
 
 WebServer server(HTTP_PORT);
+
+size_t imageMaxBytes();   // defined below; the real image/GIF size limit in bytes
 
 void sendJson(int code, const JsonDocument& doc) {
   String out;
@@ -59,6 +62,8 @@ void handleStatus() {
   d["notify"] = IPixel::lastNotifyHex();
   d["height"] = IPixel::reportedHeight();
   d["mqtt"]   = Mqtt::statusText();
+  d["imgMax"] = (uint32_t)imageMaxBytes();   // real image/GIF byte limit
+  d["psram"]  = (uint32_t)ESP.getPsramSize();
   {
     Preferences p;
     p.begin("ipixel", true);
@@ -168,52 +173,64 @@ void handleMqtt() {
 // The browser resizes/encodes to the panel size and POSTs the file bytes as
 // multipart/form-data to /api/image?gif=0|1. We buffer the bytes and forward
 // them to the sign, which decodes the PNG/GIF itself.
-std::vector<uint8_t> g_imgBuf;
-bool   g_imgTooBig = false;
-bool   g_imgNoMem  = false;
-static const size_t IMG_MAX_BYTES = 32 * 1024;   // bound RAM on the classic ESP32
+// The image/GIF buffer is a single raw block, allocated ONCE at boot and reused
+// for every upload, so the upload path never allocates and can never OOM-reboot
+// mid-transfer (the old std::vector grew by doubling, and a failed realloc threw
+// bad_alloc -> abort). heap_caps_malloc returns NULL on failure instead of
+// throwing, so even the one boot allocation is safe.
+//
+// If the module has PSRAM (WROVER) the buffer goes there and can be large; on a
+// no-PSRAM board (WROOM) it falls back to a modest DRAM block, sized so it does
+// not starve MQTT-over-TLS. g_imgCap is the real maximum and is reported to the
+// web UI so the shown limit always matches reality.
+uint8_t* g_img    = nullptr;
+size_t   g_imgCap = 0;             // allocated capacity == the real max image size
+size_t   g_imgLen = 0;             // bytes received for the current upload
+bool     g_imgTooBig = false;
 
-// Reserve the whole image buffer ONCE, at boot, while the heap is still clean
-// and contiguous. Growing a std::vector during the upload (insert -> realloc ->
-// doubling) needs an ever-larger contiguous block while BLE+Wi-Fi fragment the
-// heap; when operator new can't find one it throws bad_alloc, and because
-// exceptions abort on the ESP32 the whole box reboots mid-upload. Owning the
-// buffer for the life of the device means the upload path never allocates, so
-// it can never fail this way.
+static const size_t IMG_MAX_PSRAM = 512 * 1024;   // generous when PSRAM exists
+static const size_t IMG_MAX_DRAM  = 48  * 1024;   // safe no-PSRAM ceiling
+
+size_t imageMaxBytes() { return g_imgCap; }
+
 void imgBufInit() {
-  // reserve() throws bad_alloc on failure and exceptions abort on the ESP32, so
-  // only reserve when a single block that big is actually available. At boot it
-  // always is; the guard just means a pathological heap logs instead of crashing.
-  if (ESP.getMaxAllocHeap() >= IMG_MAX_BYTES + 8192) {
-    g_imgBuf.reserve(IMG_MAX_BYTES);   // called from begin(), before fragmentation
+  if (psramFound()) {
+    g_imgCap = IMG_MAX_PSRAM;
+    g_img = (uint8_t*) heap_caps_malloc(g_imgCap, MALLOC_CAP_SPIRAM);
   }
-  Serial.printf("[web] image buffer: %u bytes reserved (largest free block %u)\n",
-                (unsigned)g_imgBuf.capacity(), (unsigned)ESP.getMaxAllocHeap());
+  if (!g_img) {                     // no PSRAM, or the PSRAM alloc failed
+    g_imgCap = IMG_MAX_DRAM;
+    if (ESP.getMaxAllocHeap() >= g_imgCap + 8192)
+      g_img = (uint8_t*) heap_caps_malloc(g_imgCap, MALLOC_CAP_8BIT);
+    if (!g_img) g_imgCap = 0;       // give up gracefully; handlers report it
+  }
+  Serial.printf("[web] image buffer: %u bytes in %s (psram total %u)\n",
+                (unsigned)g_imgCap,
+                (g_img && psramFound()) ? "PSRAM" : "DRAM",
+                (unsigned)ESP.getPsramSize());
 }
 
 void handleImageUpload() {
   HTTPUpload& up = server.upload();
   if (up.status == UPLOAD_FILE_START) {
-    g_imgBuf.clear();                // keeps the reserved capacity, frees nothing
+    g_imgLen = 0;
     g_imgTooBig = false;
-    g_imgNoMem  = (g_imgBuf.capacity() < IMG_MAX_BYTES);   // boot reserve failed?
   } else if (up.status == UPLOAD_FILE_WRITE) {
-    if (g_imgNoMem) return;
-    if (g_imgBuf.size() + up.currentSize > IMG_MAX_BYTES) { g_imgTooBig = true; return; }
-    // Capacity is pre-reserved to IMG_MAX_BYTES and the line above caps size at
-    // IMG_MAX_BYTES, so this insert can never reallocate.
-    g_imgBuf.insert(g_imgBuf.end(), up.buf, up.buf + up.currentSize);
+    if (!g_img) return;             // no buffer (boot allocation failed)
+    if (g_imgLen + up.currentSize > g_imgCap) { g_imgTooBig = true; return; }
+    memcpy(g_img + g_imgLen, up.buf, up.currentSize);
+    g_imgLen += up.currentSize;
   }
 }
 
 void handleImageDone() {
-  if (!IPixel::isConnected()) { g_imgBuf.clear(); return ok(false, "sign not connected"); }
-  if (g_imgNoMem)  { g_imgBuf.clear(); return ok(false, "low memory, reboot the sign and retry"); }
-  if (g_imgTooBig) { g_imgBuf.clear(); return ok(false, "image too large (max 32 KB)"); }
-  if (g_imgBuf.empty()) return ok(false, "no image data");
+  if (!IPixel::isConnected()) { g_imgLen = 0; return ok(false, "sign not connected"); }
+  if (!g_img)      { g_imgLen = 0; return ok(false, "no image buffer (low memory at boot)"); }
+  if (g_imgTooBig) { g_imgLen = 0; return ok(false, String("image too large (max ") + (g_imgCap / 1024) + " KB)"); }
+  if (g_imgLen == 0) return ok(false, "no image data");
   bool gif = (server.arg("gif") == "1");
-  bool r = IPixel::sendImage(gif, g_imgBuf.data(), g_imgBuf.size());
-  g_imgBuf.clear();                 // keep capacity for the next upload
+  bool r = IPixel::sendImage(gif, g_img, g_imgLen);
+  g_imgLen = 0;
   ok(r);
 }
 
@@ -262,14 +279,14 @@ void handlePlaylistAddText() {
 }
 
 void handlePlaylistImageDone() {
-  if (g_imgNoMem)  { g_imgBuf.clear(); return ok(false, "low memory, reboot the sign and retry"); }
-  if (g_imgTooBig) { g_imgBuf.clear(); return ok(false, "image too large (max 32 KB)"); }
-  if (g_imgBuf.empty()) return ok(false, "no image data");
+  if (!g_img)      { g_imgLen = 0; return ok(false, "no image buffer (low memory at boot)"); }
+  if (g_imgTooBig) { g_imgLen = 0; return ok(false, String("image too large (max ") + (g_imgCap / 1024) + " KB)"); }
+  if (g_imgLen == 0) return ok(false, "no image data");
   bool gif = (server.arg("gif") == "1");
   bool r = Playlist::addImage(server.arg("name"), gif,
                               (uint16_t)server.arg("dwell").toInt(),
-                              g_imgBuf.data(), g_imgBuf.size());
-  g_imgBuf.clear();                 // keep capacity for the next upload
+                              g_img, g_imgLen);
+  g_imgLen = 0;
   ok(r, "add failed (storage full or library full?)");
 }
 
