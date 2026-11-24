@@ -173,50 +173,56 @@ void handleMqtt() {
 // The browser resizes/encodes to the panel size and POSTs the file bytes as
 // multipart/form-data to /api/image?gif=0|1. We buffer the bytes and forward
 // them to the sign, which decodes the PNG/GIF itself.
-// The image/GIF buffer is a single raw block, allocated ONCE at boot and reused
-// for every upload, so the upload path never allocates and can never OOM-reboot
-// mid-transfer (the old std::vector grew by doubling, and a failed realloc threw
-// bad_alloc -> abort). heap_caps_malloc returns NULL on failure instead of
-// throwing, so even the one boot allocation is safe.
+// The image/GIF buffer is allocated ON DEMAND at the start of an upload and
+// freed the moment it finishes. This matters on a no-PSRAM WROOM: a buffer held
+// permanently would sit on the heap starving MQTT-over-TLS (~40 KB handshake)
+// and BLE connection setup, so the box "can barely connect". Allocating only
+// for the duration of an upload gives all of it back at idle.
 //
-// If the module has PSRAM (WROVER) the buffer goes there and can be large; on a
-// no-PSRAM board (WROOM) it falls back to a modest DRAM block, sized so it does
-// not starve MQTT-over-TLS. g_imgCap is the real maximum and is reported to the
-// web UI so the shown limit always matches reality.
-uint8_t* g_img    = nullptr;
-size_t   g_imgCap = 0;             // allocated capacity == the real max image size
-size_t   g_imgLen = 0;             // bytes received for the current upload
+// It is still ONE malloc up front (sized to this upload, capped), never the old
+// std::vector that grew by doubling and threw bad_alloc -> abort mid-upload.
+// heap_caps_malloc returns NULL on failure instead of throwing, so a tight heap
+// yields a clean error, not a reboot. With PSRAM (WROVER) the cap is large and
+// the buffer lands in PSRAM; without it, a modest DRAM cap.
+uint8_t* g_img    = nullptr;       // malloc'd at UPLOAD_FILE_START, freed at *Done
+size_t   g_imgCap = 0;             // bytes malloc'd for the current upload
+size_t   g_imgLen = 0;             // bytes received so far
 bool     g_imgTooBig = false;
+size_t   g_imgMax = 48 * 1024;     // advertised ceiling (set in imgBufInit)
 
 static const size_t IMG_MAX_PSRAM = 512 * 1024;   // generous when PSRAM exists
 static const size_t IMG_MAX_DRAM  = 48  * 1024;   // safe no-PSRAM ceiling
 
-size_t imageMaxBytes() { return g_imgCap; }
+size_t imageMaxBytes() { return g_imgMax; }
+
+static void imgFree() {
+  if (g_img) { free(g_img); g_img = nullptr; }
+  g_imgCap = 0;
+  g_imgLen = 0;
+}
 
 void imgBufInit() {
-  if (psramFound()) {
-    g_imgCap = IMG_MAX_PSRAM;
-    g_img = (uint8_t*) heap_caps_malloc(g_imgCap, MALLOC_CAP_SPIRAM);
-  }
-  if (!g_img) {                     // no PSRAM, or the PSRAM alloc failed
-    g_imgCap = IMG_MAX_DRAM;
-    if (ESP.getMaxAllocHeap() >= g_imgCap + 8192)
-      g_img = (uint8_t*) heap_caps_malloc(g_imgCap, MALLOC_CAP_8BIT);
-    if (!g_img) g_imgCap = 0;       // give up gracefully; handlers report it
-  }
-  Serial.printf("[web] image buffer: %u bytes in %s (psram total %u)\n",
-                (unsigned)g_imgCap,
-                (g_img && psramFound()) ? "PSRAM" : "DRAM",
+  g_imgMax = psramFound() ? IMG_MAX_PSRAM : IMG_MAX_DRAM;
+  Serial.printf("[web] image max %u bytes (%s, psram total %u)\n",
+                (unsigned)g_imgMax, psramFound() ? "PSRAM" : "DRAM",
                 (unsigned)ESP.getPsramSize());
 }
 
 void handleImageUpload() {
   HTTPUpload& up = server.upload();
   if (up.status == UPLOAD_FILE_START) {
-    g_imgLen = 0;
+    imgFree();                      // release any leftover from a prior upload
     g_imgTooBig = false;
+    // One allocation, up front, sized to this upload. clientContentLength() is
+    // the whole multipart body, an upper bound on the file; cap it at g_imgMax.
+    size_t want = server.clientContentLength();
+    if (want == 0 || want > g_imgMax) want = g_imgMax;
+    g_img = (uint8_t*) heap_caps_malloc(want, psramFound() ? MALLOC_CAP_SPIRAM : MALLOC_CAP_8BIT);
+    if (!g_img && psramFound())     // PSRAM miss: fall back to DRAM
+      g_img = (uint8_t*) heap_caps_malloc(want, MALLOC_CAP_8BIT);
+    g_imgCap = g_img ? want : 0;
   } else if (up.status == UPLOAD_FILE_WRITE) {
-    if (!g_img) return;             // no buffer (boot allocation failed)
+    if (!g_img) return;             // allocation failed; *Done reports it
     if (g_imgLen + up.currentSize > g_imgCap) { g_imgTooBig = true; return; }
     memcpy(g_img + g_imgLen, up.buf, up.currentSize);
     g_imgLen += up.currentSize;
@@ -224,13 +230,12 @@ void handleImageUpload() {
 }
 
 void handleImageDone() {
-  if (!IPixel::isConnected()) { g_imgLen = 0; return ok(false, "sign not connected"); }
-  if (!g_img)      { g_imgLen = 0; return ok(false, "no image buffer (low memory at boot)"); }
-  if (g_imgTooBig) { g_imgLen = 0; String e = String("image too large (max ") + (g_imgCap / 1024) + " KB)"; return ok(false, e.c_str()); }
-  if (g_imgLen == 0) return ok(false, "no image data");
+  if (!IPixel::isConnected()) { imgFree(); return ok(false, "sign not connected"); }
+  if (g_imgTooBig) { String e = String("image too large (max ") + (g_imgMax / 1024) + " KB)"; imgFree(); return ok(false, e.c_str()); }
+  if (!g_img || g_imgLen == 0) { imgFree(); return ok(false, "no image data (or low memory)"); }
   bool gif = (server.arg("gif") == "1");
   bool r = IPixel::sendImage(gif, g_img, g_imgLen);
-  g_imgLen = 0;
+  imgFree();                        // hand the RAM back to Wi-Fi/TLS/BLE
   ok(r);
 }
 
@@ -280,13 +285,13 @@ void handlePlaylistAddText() {
 
 void handlePlaylistImageDone() {
   if (!g_img)      { g_imgLen = 0; return ok(false, "no image buffer (low memory at boot)"); }
-  if (g_imgTooBig) { g_imgLen = 0; String e = String("image too large (max ") + (g_imgCap / 1024) + " KB)"; return ok(false, e.c_str()); }
-  if (g_imgLen == 0) return ok(false, "no image data");
+  if (g_imgTooBig) { String e = String("image too large (max ") + (g_imgMax / 1024) + " KB)"; imgFree(); return ok(false, e.c_str()); }
+  if (!g_img || g_imgLen == 0) { imgFree(); return ok(false, "no image data (or low memory)"); }
   bool gif = (server.arg("gif") == "1");
   bool r = Playlist::addImage(server.arg("name"), gif,
                               (uint16_t)server.arg("dwell").toInt(),
                               g_img, g_imgLen);
-  g_imgLen = 0;
+  imgFree();
   ok(r, "add failed (storage full or library full?)");
 }
 
