@@ -6,6 +6,7 @@
 #include "ipixel.h"
 #include <LittleFS.h>
 #include <vector>
+#include <esp_heap_caps.h>
 
 namespace Playlist {
 namespace {
@@ -100,10 +101,20 @@ bool send(const Item& it) {
   File f = LittleFS.open(imgPath(it.id), "r");
   if (!f) return false;
   size_t n = f.size();
-  std::vector<uint8_t> buf(n);
-  f.read(buf.data(), n);
+  if (n == 0) { f.close(); return false; }
+  // Load with a guarded allocation. The old std::vector<uint8_t> buf(n) threw
+  // bad_alloc when the heap could not spare n contiguous bytes (BLE + MQTT-TLS
+  // are live during a Play), and an uncaught throw aborts -> reboot on the
+  // ESP32. heap_caps_malloc returns NULL instead, so we fail cleanly. Freed as
+  // soon as the send completes, so it does not sit on the heap.
+  uint8_t* buf = (uint8_t*) heap_caps_malloc(n, MALLOC_CAP_SPIRAM);  // PSRAM if any
+  if (!buf) buf = (uint8_t*) heap_caps_malloc(n, MALLOC_CAP_8BIT);   // else DRAM
+  if (!buf) { f.close(); Serial.printf("[play] out of memory for %u-byte image\n", (unsigned)n); return false; }
+  size_t got = f.read(buf, n);
   f.close();
-  return IPixel::sendImage(it.gif, buf.data(), buf.size());
+  bool r = (got == n) && IPixel::sendImage(it.gif, buf, got);
+  free(buf);
+  return r;
 }
 
 int nextEnabled(int from) {
