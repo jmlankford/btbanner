@@ -170,28 +170,50 @@ void handleMqtt() {
 // them to the sign, which decodes the PNG/GIF itself.
 std::vector<uint8_t> g_imgBuf;
 bool   g_imgTooBig = false;
+bool   g_imgNoMem  = false;
 static const size_t IMG_MAX_BYTES = 32 * 1024;   // bound RAM on the classic ESP32
+
+// Reserve the whole image buffer ONCE, at boot, while the heap is still clean
+// and contiguous. Growing a std::vector during the upload (insert -> realloc ->
+// doubling) needs an ever-larger contiguous block while BLE+Wi-Fi fragment the
+// heap; when operator new can't find one it throws bad_alloc, and because
+// exceptions abort on the ESP32 the whole box reboots mid-upload. Owning the
+// buffer for the life of the device means the upload path never allocates, so
+// it can never fail this way.
+void imgBufInit() {
+  // reserve() throws bad_alloc on failure and exceptions abort on the ESP32, so
+  // only reserve when a single block that big is actually available. At boot it
+  // always is; the guard just means a pathological heap logs instead of crashing.
+  if (ESP.getMaxAllocHeap() >= IMG_MAX_BYTES + 8192) {
+    g_imgBuf.reserve(IMG_MAX_BYTES);   // called from begin(), before fragmentation
+  }
+  Serial.printf("[web] image buffer: %u bytes reserved (largest free block %u)\n",
+                (unsigned)g_imgBuf.capacity(), (unsigned)ESP.getMaxAllocHeap());
+}
 
 void handleImageUpload() {
   HTTPUpload& up = server.upload();
   if (up.status == UPLOAD_FILE_START) {
-    g_imgBuf.clear();
+    g_imgBuf.clear();                // keeps the reserved capacity, frees nothing
     g_imgTooBig = false;
+    g_imgNoMem  = (g_imgBuf.capacity() < IMG_MAX_BYTES);   // boot reserve failed?
   } else if (up.status == UPLOAD_FILE_WRITE) {
+    if (g_imgNoMem) return;
     if (g_imgBuf.size() + up.currentSize > IMG_MAX_BYTES) { g_imgTooBig = true; return; }
+    // Capacity is pre-reserved to IMG_MAX_BYTES and the line above caps size at
+    // IMG_MAX_BYTES, so this insert can never reallocate.
     g_imgBuf.insert(g_imgBuf.end(), up.buf, up.buf + up.currentSize);
   }
 }
 
 void handleImageDone() {
-  if (!IPixel::isConnected()) return ok(false, "sign not connected");
-  if (g_imgTooBig) { g_imgBuf.clear(); g_imgBuf.shrink_to_fit(); return ok(false, "image too large (max 32 KB)"); }
+  if (!IPixel::isConnected()) { g_imgBuf.clear(); return ok(false, "sign not connected"); }
+  if (g_imgNoMem)  { g_imgBuf.clear(); return ok(false, "low memory, reboot the sign and retry"); }
+  if (g_imgTooBig) { g_imgBuf.clear(); return ok(false, "image too large (max 32 KB)"); }
   if (g_imgBuf.empty()) return ok(false, "no image data");
-  if (ESP.getFreeHeap() < 40000) { g_imgBuf.clear(); g_imgBuf.shrink_to_fit(); return ok(false, "low memory, try a smaller image"); }
   bool gif = (server.arg("gif") == "1");
   bool r = IPixel::sendImage(gif, g_imgBuf.data(), g_imgBuf.size());
-  g_imgBuf.clear();
-  g_imgBuf.shrink_to_fit();
+  g_imgBuf.clear();                 // keep capacity for the next upload
   ok(r);
 }
 
@@ -240,13 +262,14 @@ void handlePlaylistAddText() {
 }
 
 void handlePlaylistImageDone() {
-  if (g_imgTooBig) { g_imgBuf.clear(); g_imgBuf.shrink_to_fit(); return ok(false, "image too large (max 48 KB)"); }
+  if (g_imgNoMem)  { g_imgBuf.clear(); return ok(false, "low memory, reboot the sign and retry"); }
+  if (g_imgTooBig) { g_imgBuf.clear(); return ok(false, "image too large (max 32 KB)"); }
   if (g_imgBuf.empty()) return ok(false, "no image data");
   bool gif = (server.arg("gif") == "1");
   bool r = Playlist::addImage(server.arg("name"), gif,
                               (uint16_t)server.arg("dwell").toInt(),
                               g_imgBuf.data(), g_imgBuf.size());
-  g_imgBuf.clear(); g_imgBuf.shrink_to_fit();
+  g_imgBuf.clear();                 // keep capacity for the next upload
   ok(r, "add failed (storage full or library full?)");
 }
 
@@ -280,6 +303,7 @@ void handlePlaylistRotate() {
 }  // namespace
 
 void begin() {
+  imgBufInit();   // grab the image buffer now, while the heap is clean
   server.on("/",               HTTP_GET,  handleRoot);
   server.on("/api/status",     HTTP_GET,  handleStatus);
   server.on("/api/scan",       HTTP_GET,  handleScan);
