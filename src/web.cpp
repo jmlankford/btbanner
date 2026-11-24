@@ -226,7 +226,7 @@ void handleImageUpload() {
 void handleImageDone() {
   if (!IPixel::isConnected()) { g_imgLen = 0; return ok(false, "sign not connected"); }
   if (!g_img)      { g_imgLen = 0; return ok(false, "no image buffer (low memory at boot)"); }
-  if (g_imgTooBig) { g_imgLen = 0; return ok(false, String("image too large (max ") + (g_imgCap / 1024) + " KB)"); }
+  if (g_imgTooBig) { g_imgLen = 0; String e = String("image too large (max ") + (g_imgCap / 1024) + " KB)"; return ok(false, e.c_str()); }
   if (g_imgLen == 0) return ok(false, "no image data");
   bool gif = (server.arg("gif") == "1");
   bool r = IPixel::sendImage(gif, g_img, g_imgLen);
@@ -280,7 +280,7 @@ void handlePlaylistAddText() {
 
 void handlePlaylistImageDone() {
   if (!g_img)      { g_imgLen = 0; return ok(false, "no image buffer (low memory at boot)"); }
-  if (g_imgTooBig) { g_imgLen = 0; return ok(false, String("image too large (max ") + (g_imgCap / 1024) + " KB)"); }
+  if (g_imgTooBig) { g_imgLen = 0; String e = String("image too large (max ") + (g_imgCap / 1024) + " KB)"; return ok(false, e.c_str()); }
   if (g_imgLen == 0) return ok(false, "no image data");
   bool gif = (server.arg("gif") == "1");
   bool r = Playlist::addImage(server.arg("name"), gif,
