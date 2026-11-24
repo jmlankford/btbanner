@@ -81,6 +81,11 @@ void setup() {
   delay(200);
   Serial.println("\n=== ESP32 iPixel Color BLE bridge ===");
 
+  // Create the NVS namespace once (read-write) so the many read-only opens
+  // elsewhere don't flood the log with "nvs_open failed: NOT_FOUND" on a fresh
+  // chip (e.g. right after a full flash erase).
+  { Preferences p; p.begin("ipixel", false); p.end(); }
+
   startWifi();
   IPixel::begin();
   Playlist::begin();          // mount LittleFS, load saved content

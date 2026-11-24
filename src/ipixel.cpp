@@ -126,6 +126,9 @@ bool sendFramed(const uint8_t* payload, size_t plen,
   const uint32_t psz = plen;
   size_t off = 0;
   bool first = true;
+  uint16_t win = 0;
+  Serial.printf("[ble] send: %u bytes, crc=%08x, type=%02x/%02x tail=%02x in %u-byte windows\n",
+                (unsigned)plen, (unsigned)crc, b0, b1, tail, (unsigned)TEXT_WINDOW_BYTES);
   while ((off < plen || first) && g_connected) {
     size_t take = min((size_t)TEXT_WINDOW_BYTES, plen - off);
     std::vector<uint8_t> pkt;                       // one buffer: prefix+header+chunk
@@ -141,15 +144,20 @@ bool sendFramed(const uint8_t* payload, size_t plen,
     pkt.insert(pkt.end(), payload + off, payload + off + take);
 
     g_ack = false;
-    if (!writeChunked(pkt)) return false;
+    g_lastNotify = "";
+    if (!writeChunked(pkt)) { Serial.printf("[ble] window %u: write failed\n", win); return false; }
 
     uint32_t t0 = millis();                         // wait (softly) for the ACK
     while (!g_ack && g_connected && (millis() - t0) < BLE_ACK_TIMEOUT_MS) delay(10);
-    if (!g_ack) Serial.println("[ble] warning: no ACK for window");
+    Serial.printf("[ble] window %u: off=%u take=%u opt=%02x -> %s%s\n",
+                  win, (unsigned)off, (unsigned)take, first ? 0x00 : 0x02,
+                  g_ack ? "ACK " : "NO-ACK ", g_lastNotify.c_str());
 
     off += take;
     first = false;
+    win++;
   }
+  Serial.printf("[ble] send done: %u windows\n", win);
   return g_connected;
 }
 
