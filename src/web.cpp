@@ -170,7 +170,7 @@ void handleMqtt() {
 // them to the sign, which decodes the PNG/GIF itself.
 std::vector<uint8_t> g_imgBuf;
 bool   g_imgTooBig = false;
-static const size_t IMG_MAX_BYTES = 48 * 1024;
+static const size_t IMG_MAX_BYTES = 32 * 1024;   // bound RAM on the classic ESP32
 
 void handleImageUpload() {
   HTTPUpload& up = server.upload();
@@ -185,8 +185,9 @@ void handleImageUpload() {
 
 void handleImageDone() {
   if (!IPixel::isConnected()) return ok(false, "sign not connected");
-  if (g_imgTooBig) { g_imgBuf.clear(); g_imgBuf.shrink_to_fit(); return ok(false, "image too large (max 48 KB)"); }
+  if (g_imgTooBig) { g_imgBuf.clear(); g_imgBuf.shrink_to_fit(); return ok(false, "image too large (max 32 KB)"); }
   if (g_imgBuf.empty()) return ok(false, "no image data");
+  if (ESP.getFreeHeap() < 40000) { g_imgBuf.clear(); g_imgBuf.shrink_to_fit(); return ok(false, "low memory, try a smaller image"); }
   bool gif = (server.arg("gif") == "1");
   bool r = IPixel::sendImage(gif, g_imgBuf.data(), g_imgBuf.size());
   g_imgBuf.clear();

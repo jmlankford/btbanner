@@ -99,56 +99,58 @@ bool writeRaw(const uint8_t* data, size_t len) {
 }
 
 bool writeChunked(const std::vector<uint8_t>& pkt) {
-  if (!g_connected || !writeChar) return false;
   size_t off = 0;
   while (off < pkt.size()) {
+    // Re-check every chunk: a disconnect mid-transfer frees writeChar, so a
+    // single up-front check is not enough (dereferencing it would crash).
+    if (!g_connected || !writeChar) return false;
     size_t take = min((size_t)BLE_CHUNK_BYTES, pkt.size() - off);
     if (!writeChar->writeValue(const_cast<uint8_t*>(pkt.data()) + off, take, true))
       return false;
     off += take;
+    delay(1);   // yield so the BLE/Wi-Fi stacks run and the watchdog is fed
   }
   return true;
 }
 
 // Wrap a data payload in the windowed/CRC transport used for text & images and
-// send it. Windows are 12 KiB; each window carries a 13-byte header (its first
-// two bytes and the tail byte identify the payload type) and the CRC of the
-// *entire* payload.
+// send it. Windows are 12 KiB; each carries a 13-byte header (its first two
+// bytes and the tail byte identify the payload type) and the CRC of the whole
+// payload. Takes a raw pointer so large images are not copied, and bails
+// cleanly if the sign disconnects mid-send (so it never crashes/reboots).
 //   text: b0=0x00 b1=0x01 tail=0x00 | PNG: 0x02/0x00/0x00 | GIF: 0x03/0x00/0x02
-bool sendFramed(const std::vector<uint8_t>& payload,
+bool sendFramed(const uint8_t* payload, size_t plen,
                 uint8_t b0, uint8_t b1, uint8_t tail, uint8_t saveSlot) {
-  if (!g_connected || !writeChar) return false;
-  const uint32_t crc  = crc32(payload.data(), payload.size());
-  const uint32_t psz  = payload.size();
+  if (!g_connected || !writeChar || !payload) return false;
+  const uint32_t crc = crc32(payload, plen);
+  const uint32_t psz = plen;
   size_t off = 0;
   bool first = true;
-  while (off < payload.size() || first) {
-    size_t take = min((size_t)TEXT_WINDOW_BYTES, payload.size() - off);
-    std::vector<uint8_t> frame;
-    frame.push_back(b0);
-    frame.push_back(b1);
-    frame.push_back(first ? 0x00 : 0x02);          // option
-    putLE32(frame, psz);                           // total payload size
-    putLE32(frame, crc);                           // CRC of whole payload
-    frame.push_back(tail);
-    frame.push_back(saveSlot);
-    frame.insert(frame.end(), payload.begin() + off, payload.begin() + off + take);
-
-    std::vector<uint8_t> pkt;
-    putLE16(pkt, (uint16_t)(frame.size() + 2));    // prefix counts itself
-    pkt.insert(pkt.end(), frame.begin(), frame.end());
+  while ((off < plen || first) && g_connected) {
+    size_t take = min((size_t)TEXT_WINDOW_BYTES, plen - off);
+    std::vector<uint8_t> pkt;                       // one buffer: prefix+header+chunk
+    pkt.reserve(15 + take);
+    putLE16(pkt, (uint16_t)(13 + take + 2));        // prefix counts itself
+    pkt.push_back(b0);
+    pkt.push_back(b1);
+    pkt.push_back(first ? 0x00 : 0x02);            // option
+    putLE32(pkt, psz);                             // total payload size
+    putLE32(pkt, crc);                             // CRC of whole payload
+    pkt.push_back(tail);
+    pkt.push_back(saveSlot);
+    pkt.insert(pkt.end(), payload + off, payload + off + take);
 
     g_ack = false;
     if (!writeChunked(pkt)) return false;
 
-    uint32_t t0 = millis();                        // wait (softly) for the ACK
-    while (!g_ack && (millis() - t0) < BLE_ACK_TIMEOUT_MS) delay(10);
+    uint32_t t0 = millis();                         // wait (softly) for the ACK
+    while (!g_ack && g_connected && (millis() - t0) < BLE_ACK_TIMEOUT_MS) delay(10);
     if (!g_ack) Serial.println("[ble] warning: no ACK for window");
 
     off += take;
     first = false;
   }
-  return true;
+  return g_connected;
 }
 
 void discoverChars() {
@@ -311,16 +313,15 @@ bool sendText(const String& text, uint8_t r, uint8_t g, uint8_t b,
       payload.push_back(pgm_read_byte(&glyph[row]));
   }
 
-  return sendFramed(payload, 0x00, 0x01, 0x00, 0);
+  return sendFramed(payload.data(), payload.size(), 0x00, 0x01, 0x00, 0);
 }
 
 bool sendImage(bool isGif, const uint8_t* data, size_t len, uint8_t saveSlot) {
   if (!g_connected || !writeChar || !data || !len) return false;
-  std::vector<uint8_t> payload(data, data + len);
-  // The device decodes the PNG/GIF itself; we just stream the raw file bytes
-  // through the same windowed/CRC transport with the image type bytes.
+  // The device decodes the PNG/GIF itself; stream the raw file bytes through
+  // the windowed/CRC transport with the image type bytes (no extra copy).
   //   PNG: b0=0x02 tail=0x00   GIF: b0=0x03 tail=0x02
-  return sendFramed(payload, isGif ? 0x03 : 0x02, 0x00, isGif ? 0x02 : 0x00, saveSlot);
+  return sendFramed(data, len, isGif ? 0x03 : 0x02, 0x00, isGif ? 0x02 : 0x00, saveSlot);
 }
 
 bool sendRaw(const uint8_t* data, size_t len) {
